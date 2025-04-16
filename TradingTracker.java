@@ -1,5 +1,6 @@
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.table.AbstractTableModel;
 import java.awt.*;
 import java.awt.event.*;
 import java.util.ArrayList;
@@ -10,82 +11,99 @@ public class TradingTracker extends JFrame {
     private TransactionTracker tracker;
     private PortfolioManager portfolio;
     private ArrayList<Trade> allTrades;
-    
+
     private JTextField symbolField;
     private JTextField priceField;
     private JTextField volumeField;
-    private JTextArea outputArea;
+    private JTable tradeTable;
+    private TradeTableModel tableModel;
+    private JLabel bestTradeLabel;
+    private JLabel worstTradeLabel;
 
     private Random random;
+    private javax.swing.Timer priceUpdateTimer;
 
     public TradingTracker() {
         tracker = new TransactionTracker();
         portfolio = new PortfolioManager();
         allTrades = new ArrayList<>();
         random = new Random();
-        
+
         setTitle("Stock Market Trading Tracker");
-        setSize(600, 500);
+        setSize(800, 600);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null); // Center the window.
-        
+
+        // Main container - BorderLayout.
         JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
         mainPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
         add(mainPanel);
-        
-        JPanel inputPanel = new JPanel(new GridLayout(4, 2, 5, 5));
-        inputPanel.setBorder(BorderFactory.createTitledBorder("Trade Details"));
-        mainPanel.add(inputPanel, BorderLayout.NORTH);
-        
-        inputPanel.add(new JLabel("Stock Symbol:"));
+
+        // Top 
+        JPanel topPanel = new JPanel();
+        topPanel.setLayout(new BoxLayout(topPanel, BoxLayout.Y_AXIS));
+        mainPanel.add(topPanel, BorderLayout.NORTH);
+
+        // Trade details panel  - GridLayout.
+        JPanel detailsPanel = new JPanel(new GridLayout(1, 6, 5, 5));
+        detailsPanel.setBorder(BorderFactory.createTitledBorder("Trade Details"));
+        topPanel.add(detailsPanel);
+
+        detailsPanel.add(new JLabel("Stock Symbol:"));
         symbolField = new JTextField();
-        inputPanel.add(symbolField);
-        
-        inputPanel.add(new JLabel("Price:"));
-        priceField = new JTextField("100"); // Default price.
-        inputPanel.add(priceField);
-        
-        inputPanel.add(new JLabel("Volume:"));
-        volumeField = new JTextField("10"); // Default volume.
-        inputPanel.add(volumeField);
-        
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
+        detailsPanel.add(symbolField);
+
+        detailsPanel.add(new JLabel("Price:"));
+        priceField = new JTextField("100");
+        detailsPanel.add(priceField);
+
+        detailsPanel.add(new JLabel("Volume:"));
+        volumeField = new JTextField("10");
+        detailsPanel.add(volumeField);
+
+        // Buttons panel- FlowLayout centered.
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 5));
+        topPanel.add(buttonPanel);
+        buttonPanel.setBorder(BorderFactory.createEmptyBorder(5, 0, 5, 0));
+
         JButton addButton = new JButton("Add Trade");
-        JButton updateButton = new JButton("Update Prices");
-        JButton viewButton = new JButton("View All Trades");
+        JButton sellButton = new JButton("Sell Stock");
+        JButton updateAllButton = new JButton("Update All Prices");
+        JButton updateSelectedButton = new JButton("Update Selected Stock");
         buttonPanel.add(addButton);
-        buttonPanel.add(updateButton);
-        buttonPanel.add(viewButton);
-        inputPanel.add(buttonPanel);
-        
-        inputPanel.add(new JLabel());
-        
-        outputArea = new JTextArea();
-        outputArea.setEditable(false);
-        outputArea.setFont(new Font("Arial", Font.PLAIN, 12));
-        JScrollPane scrollPane = new JScrollPane(outputArea);
-        scrollPane.setBorder(BorderFactory.createTitledBorder("Output"));
-        mainPanel.add(scrollPane, BorderLayout.CENTER);
-        
-        addButton.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent e) {
-                addTrade();
-            }
-        });
-        
-        updateButton.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent e) {
-                updatePrices();
-            }
-        });
-        
-        viewButton.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent e) {
-                updateDisplay("Viewing all trades:");
-            }
-        });
+        buttonPanel.add(sellButton);
+        buttonPanel.add(updateAllButton);
+        buttonPanel.add(updateSelectedButton);
+
+        //   table 
+        tableModel = new TradeTableModel(allTrades);
+        tradeTable = new JTable(tableModel);
+        JScrollPane tableScroll = new JScrollPane(tradeTable);
+        tableScroll.setBorder(BorderFactory.createTitledBorder("Trades"));
+        mainPanel.add(tableScroll, BorderLayout.CENTER);
+
+        // Summary 
+        JPanel summaryPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        bestTradeLabel = new JLabel("Best Trade: N/A");
+        worstTradeLabel = new JLabel("Worst Trade: N/A");
+        summaryPanel.add(bestTradeLabel);
+        summaryPanel.add(worstTradeLabel);
+        mainPanel.add(summaryPanel, BorderLayout.SOUTH);
+
+        // Button action
+        addButton.addActionListener(e -> addTrade());
+        sellButton.addActionListener(e -> sellTrade());
+        updateAllButton.addActionListener(e -> updateAllPrices());
+        updateSelectedButton.addActionListener(e -> updateSelectedStock());
+
+        //  Swing Timer - 10 seconds.
+        priceUpdateTimer = new javax.swing.Timer(10000, e -> updateAllPrices());
+        priceUpdateTimer.start();
+
+        updateSummary();
     }
 
+    // Buy
     private void addTrade() {
         String symbol = symbolField.getText().trim();
         if (symbol.isEmpty()) {
@@ -102,23 +120,71 @@ public class TradingTracker extends JFrame {
             return;
         }
         double timestamp = System.currentTimeMillis() / 1000.0;
-        Trade trade = new Trade(timestamp, symbol, price, volume);
+        Trade trade = new Trade(timestamp, symbol, price, volume, price, "Buy");
         tracker.addTrade(trade);
         portfolio.addTrade(trade);
         allTrades.add(trade);
         symbolField.setText("");
-        updateDisplay("Trade added: " + trade);
+        tableModel.fireTableDataChanged();
+        updateSummary();
     }
 
+    // Sell 
+    private void sellTrade() {
+        String symbol = JOptionPane.showInputDialog(this, "Enter the stock symbol to sell:");
+        if (symbol == null || symbol.trim().isEmpty()) {
+            return;
+        }
+        Trade buyTrade = null;
+        for (Trade t : allTrades) {
+            if (t.getSymbol().equalsIgnoreCase(symbol.trim()) && t.getTradeType().equals("Buy") && t.getVolume() > 0) {
+                buyTrade = t;
+                break;
+            }
+        }
+        if (buyTrade == null) {
+            JOptionPane.showMessageDialog(this, "No available buy trade found for symbol: " + symbol, "Sell Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        String volStr = JOptionPane.showInputDialog(this, "Enter number of shares to sell (Available: " + buyTrade.getVolume() + "):");
+        if (volStr == null || volStr.trim().isEmpty()) {
+            return;
+        }
+        int sellVolume;
+        try {
+            sellVolume = Integer.parseInt(volStr);
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Volume must be an integer.", "Input Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        if (sellVolume <= 0 || sellVolume > buyTrade.getVolume()) {
+            JOptionPane.showMessageDialog(this, "Invalid sell volume. Must be between 1 and " + buyTrade.getVolume(), "Sell Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        double currentPrice = buyTrade.getPrice();
+        double timestamp = System.currentTimeMillis() / 1000.0;
+        Trade sellTrade = new Trade(timestamp, symbol, currentPrice, sellVolume, buyTrade.getOriginalPrice(), "Sell");
+        tracker.addTrade(sellTrade);
+        portfolio.addTrade(sellTrade);
+        allTrades.add(sellTrade);
+        buyTrade.reduceVolume(sellVolume);
+        tableModel.fireTableDataChanged();
+        updateSummary();
+    }
+
+    // price update.
     private double simulatePriceUpdate(Trade trade, double maxFluctuation) {
         double factor = 1 + (random.nextDouble() * 2 * maxFluctuation - maxFluctuation);
         return trade.getPrice() * factor;
     }
 
-    private void updatePrices() {
+    // Update all 
+    private void updateAllPrices() {
         for (Trade trade : allTrades) {
-            double newPrice = simulatePriceUpdate(trade, 0.05);
-            trade.setPrice(newPrice);
+            if (trade.getTradeType().equals("Buy") && trade.getVolume() > 0) {
+                double newPrice = simulatePriceUpdate(trade, 0.05);
+                trade.setPrice(newPrice);
+            }
         }
         tracker = new TransactionTracker();
         portfolio = new PortfolioManager();
@@ -126,59 +192,119 @@ public class TradingTracker extends JFrame {
             tracker.addTrade(trade);
             portfolio.addTrade(trade);
         }
-        updateDisplay("Prices updated for all trades.");
+        tableModel.fireTableDataChanged();
+        updateSummary();
     }
 
-    private void updateDisplay(String message) {
-        outputArea.setText(""); 
-        if (!message.isEmpty()) {
-            outputArea.append(message + "\n\n");
+    // Update for selected trade.
+    private void updateSelectedStock() {
+        int selectedRow = tradeTable.getSelectedRow();
+        if (selectedRow == -1) {
+            JOptionPane.showMessageDialog(this, "Please select a trade to update.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            return;
         }
+        Trade trade = allTrades.get(selectedRow);
+        if (!trade.getTradeType().equals("Buy") || trade.getVolume() <= 0) {
+            JOptionPane.showMessageDialog(this, "Selected trade is not an active buy trade.", "Update Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        double newPrice = simulatePriceUpdate(trade, 0.05);
+        trade.setPrice(newPrice);
+        tracker = new TransactionTracker();
+        portfolio = new PortfolioManager();
+        for (Trade t : allTrades) {
+            tracker.addTrade(t);
+            portfolio.addTrade(t);
+        }
+        tableModel.fireTableDataChanged();
+        updateSummary();
+    }
+
+    // Update best and worst trade 
+    private void updateSummary() {
         Trade best = tracker.getBestTrade();
         Trade worst = tracker.getWorstTrade();
-        if (best != null) {
-            outputArea.append("Best Trade: " + best.getSymbol() + " | Profit: " + String.format("%.2f", best.performanceMetric()) + "\n");
-        } else {
-            outputArea.append("Best Trade: N/A\n");
-        }
-        if (worst != null) {
-            outputArea.append("Worst Trade: " + worst.getSymbol() + " | Profit: " + String.format("%.2f", worst.performanceMetric()) + "\n");
-        } else {
-            outputArea.append("Worst Trade: N/A\n");
-        }
-        outputArea.append("\nPortfolio (Inorder Traversal):\n");
-        for (Trade trade : portfolio.getInorder()) {
-            outputArea.append(trade + " | Performance: " + String.format("%.2f", trade.performanceMetric()) + "\n");
-        }
+        bestTradeLabel.setText(best != null ? "Best Trade: " + best.getSymbol() + " | Profit: " + String.format("%.2f", best.performanceMetric()) : "Best Trade: N/A");
+        worstTradeLabel.setText(worst != null ? "Worst Trade: " + worst.getSymbol() + " | Profit: " + String.format("%.2f", worst.performanceMetric()) : "Worst Trade: N/A");
     }
-    
+
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(new Runnable() {
-            public void run() {
-                TradingTracker trackerApp = new TradingTracker();
-                trackerApp.setVisible(true);
-            }
+        SwingUtilities.invokeLater(() -> {
+            TradingTracker trackerApp = new TradingTracker();
+            trackerApp.setVisible(true);
         });
     }
 }
 
+// Table model to display trades
+class TradeTableModel extends AbstractTableModel {
+
+    private final String[] columnNames = {"Timestamp", "Symbol", "Type", "Price", "Volume", "Orig. Price", "Performance"};
+    private ArrayList<Trade> trades;
+
+    public TradeTableModel(ArrayList<Trade> trades) {
+        this.trades = trades;
+    }
+
+    @Override
+    public int getRowCount() {
+        return trades.size();
+    }
+
+    @Override
+    public int getColumnCount() {
+        return columnNames.length;
+    }
+    
+    @Override
+    public String getColumnName(int col) {
+        return columnNames[col];
+    }
+    
+    @Override
+    public Object getValueAt(int row, int col) {
+        Trade trade = trades.get(row);
+        switch (col) {
+            case 0:
+                return String.format("%.2f", trade.getTimestamp());
+            case 1:
+                return trade.getSymbol();
+            case 2:
+                return trade.getTradeType();
+            case 3:
+                return String.format("%.2f", trade.getPrice());
+            case 4:
+                return trade.getVolume();
+            case 5:
+                return String.format("%.2f", trade.getOriginalPrice());
+            case 6:
+                return String.format("%.2f", trade.performanceMetric());
+            default:
+                return "";
+        }
+    }
+}
 
 
 class Trade {
-    private double timestamp;   
-    private String symbol;      
-    private double price;       
-    private int volume;         
+    private double timestamp;
+    private String symbol;
+    private double price;
+    private int volume;
+    private double originalPrice;
+    private String tradeType;
 
-    public Trade(double timestamp, String symbol, double price, int volume) {
+    public Trade(double timestamp, String symbol, double price, int volume, double originalPrice, String tradeType) {
         this.timestamp = timestamp;
         this.symbol = symbol;
         this.price = price;
         this.volume = volume;
+        this.originalPrice = originalPrice;
+        this.tradeType = tradeType;
     }
 
     public double performanceMetric() {
-        return price * volume;
+        return (price - originalPrice) * volume;
     }
 
     public double getTimestamp() {
@@ -194,22 +320,40 @@ class Trade {
     }
 
     public void setPrice(double price) {
-        this.price = price;
+        if (tradeType.equals("Buy")) {
+            this.price = price;
+        }
     }
 
     public int getVolume() {
         return volume;
     }
 
+    public void reduceVolume(int amount) {
+        this.volume -= amount;
+        if (this.volume < 0) {
+            this.volume = 0;
+        }
+    }
+
+    public double getOriginalPrice() {
+        return originalPrice;
+    }
+
+    public String getTradeType() {
+        return tradeType;
+    }
+
     @Override
     public String toString() {
         return "Trade(Symbol: " + symbol +
+               ", Type: " + tradeType +
                ", Price: " + String.format("%.2f", price) +
                ", Volume: " + volume +
+               ", Orig.Price: " + String.format("%.2f", originalPrice) +
                ", Time: " + String.format("%.2f", timestamp) + ")";
     }
 }
-
 
 
 class TransactionTracker {
@@ -246,23 +390,19 @@ class TransactionTracker {
     }
 }
 
-
-
 class AVLNode {
-    double key;           
-    Trade trade;          
-    int height;           
-    AVLNode left;         
-    AVLNode right;        
+    double key;
+    Trade trade;
+    int height;
+    AVLNode left;
+    AVLNode right;
 
     public AVLNode(double key, Trade trade) {
         this.key = key;
         this.trade = trade;
-        this.height = 1; 
+        this.height = 1;
     }
 }
-
-
 
 class PortfolioManager {
     private AVLNode root;
@@ -310,20 +450,16 @@ class PortfolioManager {
         }
         node.height = 1 + Math.max(getHeight(node.left), getHeight(node.right));
         int balance = getBalance(node);
-        // Left Left Case
         if (balance > 1 && key < node.left.key) {
             return rightRotate(node);
         }
-        // Right Right Case
         if (balance < -1 && key > node.right.key) {
             return leftRotate(node);
         }
-        // Left Right Case
         if (balance > 1 && key > node.left.key) {
             node.left = leftRotate(node.left);
             return rightRotate(node);
         }
-        // Right Left Case
         if (balance < -1 && key < node.right.key) {
             node.right = rightRotate(node.right);
             return leftRotate(node);
@@ -349,4 +485,5 @@ class PortfolioManager {
         return result;
     }
 }
-    
+
+
